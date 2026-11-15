@@ -2,7 +2,7 @@
 /* =====================================================================
    Mentoris — servidor
    - Sirve la app (carpeta public/)
-   - Guarda la base de datos y los archivos en Cloudflare R2 (o en ./data si no hay credenciales)
+   - Guarda la base de datos y los archivos en una nube compatible con S3 (Backblaze B2, R2...) o en ./data si no hay credenciales
    - Sesiones con cookie (duran 90 días), contraseñas con PBKDF2
    - Sin dependencias externas: solo Node 18+
    ===================================================================== */
@@ -82,7 +82,15 @@ async function dailyBackup(body) {
 }
 async function loadDb() {
   const o = await store.get('db/db.json');
-  if (!o) { db = defaultDB(); console.log('Base de datos nueva (primer arranque).'); return; }
+  if (!o) {
+    // Si falta db.json pero hay copias diarias, NO empezamos de cero: restauramos la más reciente.
+    const bk = (await store.list('db/backups/')).map(x => x.key).sort();
+    if (bk.length) {
+      const b = await store.get(bk[bk.length - 1]);
+      if (b) { db = migrate(JSON.parse(b.body.toString('utf8')), false); db._rev = (db._rev || 0) + 1; console.warn(`AVISO: db.json no estaba; se restauró la copia ${bk[bk.length - 1]} (${db.users.length} usuarios).`); touchDb(); return; }
+    }
+    db = defaultDB(); console.log('Base de datos nueva (primer arranque).'); return;
+  }
   db = migrate(JSON.parse(o.body.toString('utf8')), false);
   console.log(`Base de datos cargada (${db.users.length} usuarios, rev ${db._rev}).`);
 }
@@ -93,20 +101,19 @@ const INLINE = /^image\/(png|jpeg|webp|gif)$/;
 const GZ_TYPE = /^(text\/|application\/(pdf|json|xml|msword|vnd\.ms-excel|vnd\.ms-powerpoint|rtf|x-rtf))/;
 const GZ_EXT = /\.(pdf|txt|csv|json|xml|doc|xls|ppt|rtf|md)$/i;
 async function saveFile(buf, name, type) {
-  const id = crypto.randomBytes(16).toString('hex');
-  let body = buf, enc = '';
+  let id = crypto.randomBytes(16).toString('hex'), body = buf;
   if (buf.length > 2048 && (GZ_TYPE.test(type) || GZ_EXT.test(name))) {
     const gz = zlib.gzipSync(buf, { level: 9 });
-    if (gz.length < buf.length * 0.92) { body = gz; enc = 'gzip'; }
+    if (gz.length < buf.length * 0.92) { body = gz; id += 'z'; }   // la "z" final del id marca que se guardó comprimido
   }
-  await store.put('files/' + id, body, { contentType: type, contentEncoding: enc });
+  await store.put('files/' + id, body, { contentType: type });
   return { id, url: `/api/file/${id}/${encodeURIComponent(name)}`, stored: body.length };
 }
 async function readFileObj(key) {
   const o = await store.get(key);
   if (!o) return null;
   let body = o.body;
-  if (/gzip/i.test(o.contentEncoding) && body.length > 2 && body[0] === 0x1f && body[1] === 0x8b) { try { body = zlib.gunzipSync(body); } catch (e) { } }
+  if (key.endsWith('z')) { try { body = zlib.gunzipSync(body); } catch (e) { return null; } }
   return { body, contentType: o.contentType };
 }
 async function convertDataUrls(node) {
@@ -128,7 +135,7 @@ async function gcFiles() {
   try {
     if (!db || !db.users.length) return;
     const text = JSON.stringify(db);
-    const used = new Set([...text.matchAll(/\/api\/file\/([a-f0-9]{32})/g)].map(m => m[1]));
+    const used = new Set([...text.matchAll(/\/api\/file\/([a-f0-9]{32}z?)/g)].map(m => m[1]));
     const files = await store.list('files/');
     let n = 0;
     for (const f of files) {
@@ -436,7 +443,7 @@ async function route(req, res, url) {
       const f = await saveFile(buf, name, type);
       return json(res, 200, { data: f.url, name, type, size: buf.length, stored: f.stored });
     }
-    const fm = p.match(/^\/api\/file\/([a-f0-9]{32})(?:\/(.*))?$/);
+    const fm = p.match(/^\/api\/file\/([a-f0-9]{32}z?)(?:\/(.*))?$/);
     if (fm && m === 'GET') {
       const o = await readFileObj('files/' + fm[1]);
       if (!o) return json(res, 404, { error: 'Archivo no encontrado' });
@@ -500,11 +507,15 @@ const server = http.createServer((req, res) => {
 });
 
 async function main() {
-  console.log(`Almacenamiento: ${store.kind === 'r2' ? 'Cloudflare R2' : 'carpeta local ./data (sin R2)'}`);
+  if (PROD && store.kind === 'local' && !process.env.ALLOW_LOCAL_STORAGE) {
+    console.error('ERROR: no hay almacenamiento en la nube configurado (faltan o están mal escritas las variables S3_*). En Render el disco se borra al reiniciar y perderías todos los datos. Corrige las variables en Environment.');
+    process.exit(1);
+  }
+  console.log(`Almacenamiento: ${({ r2: 'Cloudflare R2', s3: 'nube compatible con S3 (Backblaze B2, etc.)', local: 'carpeta local ./data (sin nube)' })[store.kind]}`);
   try {
     await store.put('db/.ping', Buffer.from(String(Date.now())), { contentType: 'text/plain' });   // comprueba que se puede escribir (bucket y claves correctos)
     await loadDb();
-  } catch (e) { console.error('No se pudo leer la base de datos del almacenamiento:', e.message, '\nRevisa las variables R2_* y que el token tenga permisos de lectura y escritura.'); process.exit(1); }
+  } catch (e) { console.error('No se pudo leer la base de datos del almacenamiento:', e.message, '\nRevisa las variables de almacenamiento (S3_* o R2_*), el nombre del bucket y que la clave tenga permiso de lectura y escritura.'); process.exit(1); }
   server.listen(PORT, () => console.log(`Mentoris escuchando en el puerto ${PORT}`));
   setInterval(serverTick, 30000);
   setTimeout(gcFiles, 60000); setInterval(gcFiles, 6 * 3600 * 1000);
