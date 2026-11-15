@@ -508,7 +508,13 @@ const server = http.createServer((req, res) => {
 
 async function main() {
   if (PROD && store.kind === 'local' && !process.env.ALLOW_LOCAL_STORAGE) {
-    console.error('ERROR: no hay almacenamiento en la nube configurado (faltan o están mal escritas las variables S3_*). En Render el disco se borra al reiniciar y perderías todos los datos. Corrige las variables en Environment.');
+    const need = ['S3_ENDPOINT', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'];
+    const missing = need.filter(k => !(process.env[k] || '').trim());
+    const present = Object.keys(process.env).filter(k => /^(s3|r2)_/i.test(k));
+    console.error('ERROR: no hay almacenamiento en la nube configurado. En Render el disco se borra al reiniciar y perderías todos los datos.');
+    console.error('Variables que faltan o están vacías: ' + (missing.join(', ') || '(ninguna)'));
+    console.error('Variables S3_/R2_ que sí existen en este servicio: ' + (present.join(', ') || '(ninguna)'));
+    console.error('Revisa que los nombres sean EXACTAMENTE los de la lista (mayúsculas, guiones bajos, sin espacios) en Render → Environment.');
     process.exit(1);
   }
   console.log(`Almacenamiento: ${({ r2: 'Cloudflare R2', s3: 'nube compatible con S3 (Backblaze B2, etc.)', local: 'carpeta local ./data (sin nube)' })[store.kind]}`);
