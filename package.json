@@ -1,0 +1,12 @@
+{
+  "name": "mentoris",
+  "version": "3.0.0",
+  "description": "Mentoris: plataforma escolar (tareas, exámenes, anuncios, asistencia)",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": { "node": ">=18" }
+}

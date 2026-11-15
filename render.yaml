@@ -1,0 +1,25 @@
+# Opcional: "Blueprint" de Render. Si prefieres hacerlo a mano, sigue GUIA-RENDER-R2.md
+services:
+  - type: web
+    name: mentoris
+    runtime: node
+    plan: free            # cambia a "starter" para que no se duerma
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    numInstances: 1       # no subir de 1: la base de datos vive en la memoria del servidor
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
