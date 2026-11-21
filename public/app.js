@@ -162,7 +162,24 @@ const logo = () => DB.config.logo || DEFAULT_LOGO;
 const alumnosDeGrado = gid => DB.users.filter(u => u.role === 'alumno' && u.gradoId === gid && u.activo !== false);
 const alumnosDeCurso = c => c ? alumnosDeGrado(c.gradoId) : [];
 const cursosDe = u => u.role === 'alumno' ? DB.cursos.filter(c => c.gradoId === u.gradoId) : u.role === 'maestro' ? DB.cursos.filter(c => c.maestroId === u.id) : DB.cursos;
-const hijosDe = p => DB.users.filter(u => u.role === 'alumno' && u.padreId === p.id && u.activo !== false);
+const tutoresDe = a => [a.padreId, a.padre2Id].filter(Boolean);
+const UA = navigator.userAgent || '';
+const isIOS = /iphone|ipad|ipod/i.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isSafariIOS = isIOS && /safari/i.test(UA) && !/crios|fxios|edgios|opios|gsa\//i.test(UA);
+const isStandalone = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+function ayudaInstalar() {
+  if (isStandalone()) return openInfo('Mentoris ya está instalada', '<p>Estás usando la app instalada. ✅</p>');
+  if (isIOS) {
+    return openInfo('Instalar Mentoris en tu iPhone / iPad', `${isSafariIOS ? '' : '<div class="banner warn">Si no ves la opción “Agregar a pantalla de inicio” en este navegador, abre esta misma página en <b>Safari</b> y repite los pasos.</div>'}<ol class="steps"><li><span>Toca el botón <b>Compartir</b> (el cuadrado con la flecha hacia arriba ⬆️). En iPhone está abajo; en iPad, arriba.</span></li><li><span>Desliza hacia abajo y elige <b>“Agregar a pantalla de inicio”</b>.</span></li><li><span>Toca <b>Agregar</b>. Mentoris aparecerá como una app con su propio ícono.</span></li></ol><p class="muted">Abre siempre Mentoris desde ese ícono. En iPhone, las notificaciones solo funcionan desde la app instalada (iOS 16.4 o más reciente).</p>`);
+  }
+  openInfo('Instalar Mentoris', `<ol class="steps"><li><span>Abre el menú del navegador (⋮ o ⋯).</span></li><li><span>Elige <b>“Instalar app”</b> o <b>“Agregar a pantalla de inicio”</b>.</span></li><li><span>Confirma. Mentoris aparecerá como una app.</span></li></ol>`);
+}
+const instBanner = () => (isStandalone() || localStorage.getItem('instOff') || !(deferredInstall || isIOS)) ? '' : `<div class="banner" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px"><span style="flex:1;min-width:200px">📲 Instala <b>Mentoris</b> en tu ${isIOS ? 'iPhone' : 'teléfono'} para abrirla como una app.</span>${ab(deferredInstall ? 'instalar' : 'instalarAyuda', 'Instalar', {}, 'sm')}<button type="button" class="ibtn" data-act="cerrarInst" title="Ocultar">✕</button></div>`;
+const hijosDe = p => DB.users.filter(u => u.role === 'alumno' && tutoresDe(u).includes(p.id) && u.activo !== false);
+const tutoresTxt = a => tutoresDe(a).map(id => nm(U(id))).filter(x => x && x !== '—').join(', ') || '—';
+const notifyTutores = (a, t, b, v) => tutoresDe(a).forEach(id => notify(id, t, b, v));
+function linkTutor(al, pid) { if (tutoresDe(al).includes(pid)) return true; if (!al.padreId) al.padreId = pid; else if (!al.padre2Id) al.padre2Id = pid; else return false; return true; }
+function unlinkTutor(al, pid) { if (al.padreId === pid) al.padreId = null; if (al.padre2Id === pid) al.padre2Id = null; if (!al.padreId && al.padre2Id) { al.padreId = al.padre2Id; al.padre2Id = null; } }
 const gradosIds = u => {
   if (u.role === 'alumno') return [u.gradoId];
   if (u.role === 'padre') return hijosDe(u).map(h => h.gradoId);
@@ -570,7 +587,7 @@ const setupHTML = () => `${LEGACY ? `<div class="banner"><b>Encontramos datos de
 const loginHTML = () => `<form data-form="login">
 <div class="fld"><label>Usuario</label><input name="usuario" required autocomplete="username" autocapitalize="none"></div>
 <div class="fld"><label>Contraseña</label><input type="password" name="clave" required autocomplete="current-password"></div>
-<div class="err"></div><button class="btn">Ingresar</button></form>`;
+<div class="err"></div><button class="btn">Ingresar</button>${isStandalone() ? '' : `<div style="text-align:center;margin-top:10px"><button type="button" class="linkbtn" data-act="instalarAyuda">📲 Instalar en mi ${isIOS ? 'iPhone' : 'teléfono'}</button></div>`}</form>`;
 const forcePwHTML = () => `<p class="muted">Por seguridad debes cambiar tu contraseña antes de continuar.</p><form data-form="forcepw">
 <div class="fld"><label>Contraseña actual</label><input type="password" name="act" required autocomplete="current-password"></div>
 <div class="fld"><label>Nueva contraseña</label><input type="password" name="nueva" required autocomplete="new-password"><small>Mínimo 8 caracteres, letras y números.</small></div>
@@ -655,13 +672,13 @@ function vInicio() {
   if (u.role === 'padre') {
     extra = hijosDe(u).length ? '' : `<div class="card">${empty('Aún no tienes hijos vinculados. Pide a la secretaría que enlace tu usuario.')}</div>`;
   }
-  return `<div class="tiles">${tiles}</div>${extra}<h3>Últimos anuncios</h3>${ans.map(anuncioCard).join('') || empty('No hay anuncios todavía.')}`;
+  return `${instBanner()}<div class="tiles">${tiles}</div>${extra}<h3>Últimos anuncios</h3>${ans.map(anuncioCard).join('') || empty('No hay anuncios todavía.')}`;
 }
 
 /* ---------- usuarios ---------- */
 const canTouch = t => can('usuarios') && (me().role === 'admin' || t.role !== 'admin');
 const detalleUser = u => {
-  if (u.role === 'alumno') return `${esc(G(u.gradoId)?.nombre || '—')}${u.padreId ? '' : ' ' + chip('sin padre', 'warn')}`;
+  if (u.role === 'alumno') return `${esc(G(u.gradoId)?.nombre || '—')}${tutoresDe(u).length ? '' : ' ' + chip('sin padre', 'warn')}`;
   if (u.role === 'maestro') return esc(cursosDe(u).map(c => c.nombre).join(', ') || '—');
   if (u.role === 'padre') return esc(hijosDe(u).map(nm).join(', ') || '—');
   return '';
@@ -685,6 +702,7 @@ const baseData = d => ({ nombre1: d.nombre1.trim(), nombre2: (d.nombre2 || '').t
 const gOpts = () => DB.grados.map(g => ({ v: g.id, l: g.nombre }));
 const cOpts = () => DB.cursos.map(c => ({ v: c.id, l: cursoLabel(c) }));
 const pOpts = () => DB.users.filter(x => x.role === 'padre').map(x => ({ v: x.id, l: nm(x) }));
+const aOpts = () => DB.users.filter(x => x.role === 'alumno' && x.activo !== false).sort((a, b) => nm(a).localeCompare(nm(b))).map(x => ({ v: x.id, l: `${nm(x)} · ${G(x.gradoId)?.nombre || 'sin grado'}` }));
 function asignarMaestro(u, gids, cids) {
   const set = new Set(cids);
   gids.forEach(g => DB.cursos.filter(c => c.gradoId === g).forEach(c => set.add(c.id)));
@@ -700,26 +718,36 @@ function formUsuario(ex) {
   openForm({
     title: ex ? 'Editar usuario' : 'Nuevo usuario',
     intro: ex ? '' : 'El usuario se genera solo: 1ª letra del 1er y 2º nombre + 1er apellido + 1ª letra del 2º apellido. La contraseña inicial es igual al usuario.',
-    values: ex ? { ...ex, gradosAsig: ex.gradosAsig || [], cursosAsig: ex.cursosAsig || [] } : { role: 'alumno' },
+    values: ex ? { ...ex, gradosAsig: ex.gradosAsig || [], cursosAsig: ex.cursosAsig || [], hijosIds: ex.role === 'padre' ? DB.users.filter(x => x.role === 'alumno' && tutoresDe(x).includes(ex.id)).map(x => x.id) : [] } : { role: 'alumno', hijosIds: [] },
     fields: [
       { k: 'role', label: 'Rol', type: 'select', req: 1, options: roles },
       ...baseFields(),
       { k: 'gradoId', label: 'Grado (se asignan sus cursos automáticamente)', type: 'select', req: 1, options: gOpts, blank: '— Selecciona —', when: w(['alumno']) },
       { k: 'padreId', label: 'Padre / madre (opcional ahora)', type: 'select', options: pOpts, blank: '— Se creará al terminar —', when: w(['alumno']) },
+      { k: 'padre2Id', label: 'Segundo tutor: madre / padre (opcional)', type: 'select', options: pOpts, blank: '— Ninguno —', when: w(['alumno']) },
+      { k: 'hijosIds', label: 'Hijos / alumnos de este padre o madre', type: 'checks', options: aOpts, when: w(['padre']), hint: 'Marca a todos sus hijos. Un alumno puede tener hasta 2 tutores (padre y madre).' },
       { k: 'gradosAsig', label: 'Maestro: grados completos que atiende', type: 'checks', options: gOpts, when: w(['maestro']), hint: 'Se le asignan todos los cursos de esos grados.' },
       { k: 'cursosAsig', label: 'Maestro: cursos individuales', type: 'checks', options: cOpts, when: w(['maestro']) }
     ],
     onSave: async d => {
       if (d.role === 'admin' && me().role !== 'admin') throw new Error('Solo un administrador puede crear administradores.');
       if (ex && ex.role === 'admin' && me().role !== 'admin') throw new Error('No puedes editar a un administrador.');
+      if (d.role === 'padre') {
+        const llenos = DB.users.filter(a => a.role === 'alumno' && (d.hijosIds || []).includes(a.id) && !(ex && tutoresDe(a).includes(ex.id)) && tutoresDe(a).length >= 2).map(nm);
+        if (llenos.length) throw new Error(`Ya tienen 2 tutores: ${llenos.join(', ')}. Quita a uno desde la ficha del alumno.`);
+      }
       let u = ex;
       if (ex) Object.assign(ex, baseData(d), { role: d.role });
       else u = await nuevoUser({ ...baseData(d), role: d.role });
-      if (d.role === 'alumno') { u.gradoId = d.gradoId; u.padreId = d.padreId || (ex ? null : null); }
-      else { delete u.gradoId; if (d.role !== 'padre') delete u.padreId; }
+      if (d.role === 'alumno') { u.gradoId = d.gradoId; u.padreId = d.padreId || null; u.padre2Id = d.padre2Id && d.padre2Id !== d.padreId ? d.padre2Id : null; if (!u.padreId && u.padre2Id) { u.padreId = u.padre2Id; u.padre2Id = null; } }
+      else { delete u.gradoId; delete u.padreId; delete u.padre2Id; }
+      if (d.role === 'padre') {
+        const sel = new Set(d.hijosIds || []);
+        DB.users.filter(a => a.role === 'alumno').forEach(a => { const tiene = tutoresDe(a).includes(u.id); if (sel.has(a.id) && !tiene) linkTutor(a, u.id); else if (!sel.has(a.id) && tiene) unlinkTutor(a, u.id); });
+      }
       if (d.role === 'maestro') asignarMaestro(u, d.gradosAsig || [], d.cursosAsig || []);
       else DB.cursos.forEach(c => { if (c.maestroId === u.id) c.maestroId = null; });
-      if (ex && d.role !== 'alumno') DB.users.forEach(x => { if (x.padreId === u.id && d.role !== 'padre') x.padreId = null; });
+      if (ex && d.role !== 'padre') DB.users.forEach(x => { if (x.padreId === u.id || x.padre2Id === u.id) unlinkTutor(x, u.id); });
       save(); render();
       if (!ex) { if (u.role === 'alumno' && !u.padreId) setTimeout(() => formPadre(u), 50); else setTimeout(() => showCreds([u]), 50); }
     }
@@ -730,14 +758,14 @@ function formPadre(al) {
   const created = [al];
   openForm({
     title: `Padre / madre de ${nm(al)}`,
-    intro: 'Crea el usuario del padre o vincula uno ya registrado para enlazarlo con el alumno.',
+    intro: 'Crea el usuario del padre o madre, o vincula uno ya registrado (por ejemplo, si ya tiene otros hijos en el colegio).',
     submit: 'Vincular',
     fields: [{ k: 'padreId', label: 'Vincular a un padre ya registrado', type: 'select', options: pOpts, blank: '— Crear uno nuevo —' }, ...baseFields(when)],
     onSave: async d => {
       let p;
       if (d.padreId) p = U(d.padreId);
       else { p = await nuevoUser({ ...baseData(d), role: 'padre' }); created.push(p); }
-      al.padreId = p.id; save(); render(); setTimeout(() => showCreds(created), 50);
+      if (!linkTutor(al, p.id)) throw new Error('Este alumno ya tiene dos tutores vinculados.'); save(); render(); setTimeout(() => showCreds(created), 50);
     },
     onCancel: () => showCreds([al])
   });
@@ -753,7 +781,7 @@ function vGrado() {
   const als = alumnosDeGrado(g.id).sort((a, b) => nm(a).localeCompare(nm(b)));
   const cs = DB.cursos.filter(c => c.gradoId === g.id);
   return head(esc(g.nombre), back('grados')) + `<div class="card"><h3>Horario</h3><p>${fmtT(g.inicio)} – ${fmtT(g.fin)}${(g.recreos || []).map(r => ` · Recreo ${fmtT(r.i)} – ${fmtT(r.f)}`).join('')}</p></div>
-<div class="card"><h3>Alumnos (${als.length})</h3>${als.length ? `<div class="tw"><table class="tbl"><thead><tr><th>Nombre</th><th>Usuario</th><th>Padre / madre</th><th>Solvencia</th></tr></thead><tbody>${als.map(a => `<tr><td>${esc(nm(a))}</td><td>${esc(a.username)}</td><td>${esc(nm(U(a.padreId)))}</td><td>${a.solvente === false ? chip('Insolvente', 'bad') : chip('Solvente', 'ok')}</td></tr>`).join('')}</tbody></table></div>` : empty('Sin alumnos en este grado.')}</div>
+<div class="card"><h3>Alumnos (${als.length})</h3>${als.length ? `<div class="tw"><table class="tbl"><thead><tr><th>Nombre</th><th>Usuario</th><th>Padre / madre</th><th>Solvencia</th></tr></thead><tbody>${als.map(a => `<tr><td>${esc(nm(a))}</td><td>${esc(a.username)}</td><td>${esc(tutoresTxt(a))}</td><td>${a.solvente === false ? chip('Insolvente', 'bad') : chip('Solvente', 'ok')}</td></tr>`).join('')}</tbody></table></div>` : empty('Sin alumnos en este grado.')}</div>
 <div class="card"><h3>Cursos (${cs.length})</h3>${cs.length ? `<div class="tw"><table class="tbl"><thead><tr><th>Curso</th><th>Horario</th><th>Maestro</th></tr></thead><tbody>${cs.map(c => `<tr><td>${esc(c.nombre)}</td><td>${horarioHTML(c)}</td><td>${esc(nm(U(c.maestroId)))}</td></tr>`).join('')}</tbody></table></div>` : empty('Sin cursos.')}</div>`;
 }
 function formGrado(ex) {
@@ -1099,7 +1127,7 @@ function contactos(u) {
   if (['admin', 'director', 'secretaria'].includes(u.role)) return act;
   if (u.role === 'maestro') {
     const alu = new Set(cursosDe(u).flatMap(alumnosDeCurso).map(a => a.id));
-    const pad = new Set(act.filter(x => alu.has(x.id)).map(a => a.padreId));
+    const pad = new Set(act.filter(x => alu.has(x.id)).flatMap(tutoresDe));
     return act.filter(x => alu.has(x.id) || pad.has(x.id) || ['director', 'secretaria'].includes(x.role));
   }
   if (u.role === 'alumno') { const ms = new Set(cursosDe(u).map(c => c.maestroId)); return act.filter(x => ms.has(x.id)); }
@@ -1113,7 +1141,7 @@ function tiposMensaje(u) {
   if (u.role !== 'maestro') t.push({ v: 'padres_grado', l: 'Padres de un grado' }, { v: 'padres_todos', l: 'Todos los padres' }, { v: 'maestros', l: 'Todos los maestros' });
   return t;
 }
-const padresDe = als => [...new Set(als.map(a => a.padreId).filter(Boolean))].map(U).filter(x => x && x.activo !== false);
+const padresDe = als => [...new Set(als.flatMap(tutoresDe))].map(U).filter(x => x && x.activo !== false);
 function resolverDest(u, d) {
   switch (d.tipo) {
     case 'persona': return contactos(u).filter(x => x.id === d.personaId);
@@ -1182,7 +1210,7 @@ function vBuzon() {
 function solvTable() {
   const q = S.q.toLowerCase();
   const als = DB.users.filter(u => u.role === 'alumno' && (!q || nm(u).toLowerCase().includes(q))).sort((a, b) => nm(a).localeCompare(nm(b)));
-  return als.length ? tbl(['Alumno', 'Grado', 'Padre / madre', 'Estado', ''], als.map(a => `<tr><td>${esc(nm(a))}</td><td>${esc(G(a.gradoId)?.nombre)}</td><td>${esc(nm(U(a.padreId)))}</td><td>${a.solvente === false ? chip('Insolvente', 'bad') : chip('Solvente', 'ok')}</td><td>${ab('toggleSolv', a.solvente === false ? 'Marcar solvente' : 'Marcar insolvente', { id: a.id }, (a.solvente === false ? 'ok' : 'bad') + ' sm')}</td></tr>`)) : empty('No hay alumnos.');
+  return als.length ? tbl(['Alumno', 'Grado', 'Padre / madre', 'Estado', ''], als.map(a => `<tr><td>${esc(nm(a))}</td><td>${esc(G(a.gradoId)?.nombre)}</td><td>${esc(tutoresTxt(a))}</td><td>${a.solvente === false ? chip('Insolvente', 'bad') : chip('Solvente', 'ok')}</td><td>${ab('toggleSolv', a.solvente === false ? 'Marcar solvente' : 'Marcar insolvente', { id: a.id }, (a.solvente === false ? 'ok' : 'bad') + ' sm')}</td></tr>`)) : empty('No hay alumnos.');
 }
 const vSolvencia = () => head('Solvencia de alumnos') + `<p class="muted">Si un alumno está insolvente, sus padres no verán calificaciones ni tareas pendientes.</p><div class="inl"><div><label class="muted">Buscar</label><input data-search="sol" placeholder="Nombre" value="${esc(S.q)}"></div></div><div id="slist" class="card">${solvTable()}</div>`;
 function vReportes() {
@@ -1199,6 +1227,7 @@ function vPersonalizar() {
 <div class="inl"><div><label class="muted">Menú</label><input type="color" name="cp" value="${c.colors.p}"></div><div><label class="muted">Acento (botones)</label><input type="color" name="ca" value="${c.colors.a}"></div><div><label class="muted">Fondo</label><input type="color" name="cb" value="${c.colors.bg}"></div></div>
 <h3>Estilo</h3><div class="grid2">${sel('font', 'Tipo de letra', [['moderna', 'Moderna'], ['redondeada', 'Redondeada'], ['clasica', 'Clásica'], ['compacta', 'Compacta']], ui.font || 'moderna')}${sel('radius', 'Bordes', [['recto', 'Rectos'], ['suave', 'Suaves'], ['redondo', 'Muy redondeados']], ui.radius || 'suave')}${sel('dens', 'Espaciado', [['compacta', 'Compacto'], ['normal', 'Normal'], ['amplia', 'Amplio']], ui.dens || 'normal')}${sel('side', 'Menú lateral', [['oscuro', 'Color sólido'], ['color', 'Degradado'], ['claro', 'Claro']], ui.side || 'oscuro')}</div>
 <p class="muted">Los cambios se ven al instante. Pulsa guardar para aplicarlos a todos los usuarios.</p><div class="err"></div><div class="row"><button class="btn">Guardar diseño</button>${ab('resetTema', 'Restaurar valores', {}, 'ghost')}</div></form></div>
+${me().role === 'admin' ? `<div class="card danger"><h3>🎓 Cierre de año escolar</h3><p class="muted">Al terminar el año: borra los archivos subidos para liberar espacio y pasa a los alumnos al siguiente grado. <b>Los usuarios (alumnos, padres, maestros), los grados y los cursos no se borran.</b> Antes de empezar se guarda una copia de seguridad.</p><div class="row">${ab('cierreAnio', 'Iniciar cierre de año', {}, 'bad')}${ab('espacio', '📊 Ver espacio usado', {}, 'ghost')}<span id="stg" class="muted"></span></div></div>` : ''}
 <div class="card"><h3>Respaldo de datos</h3><p class="muted">Descarga una copia de los datos (los archivos quedan guardados en la nube) o restaura una anterior. El servidor además guarda una copia automática cada día.</p><div class="row">${ab('exportar', '⬇ Exportar respaldo', {}, 'ghost')}<label class="btn ghost" style="cursor:pointer">⬆ Importar respaldo<input id="impFile" type="file" accept="application/json" hidden></label>${me().role === 'admin' ? ab('demo', 'Cargar datos de ejemplo', {}, 'ghost') : ''}</div></div>`;
 }
 function vPermisos() {
@@ -1211,7 +1240,36 @@ function vAjustes() {
   return head('Ajustes') + `<div class="card"><h3>Mi cuenta</h3><p>${esc(nm(u))}<br><span class="muted">Usuario: ${esc(u.username)} · ${ROLES[u.role]}</span></p></div>
 <div class="card"><h3>Cambiar contraseña</h3><form data-form="pw" style="max-width:380px"><div class="fld"><label>Contraseña actual</label><input type="password" name="act" required autocomplete="current-password"></div><div class="fld"><label>Nueva contraseña</label><input type="password" name="nueva" required autocomplete="new-password"></div><div class="fld"><label>Repetir nueva</label><input type="password" name="conf" required autocomplete="new-password"></div><div class="err"></div><button class="btn">Guardar</button></form></div>
 <div class="card"><h3>Apariencia en este dispositivo</h3><p class="muted">Modo actual: ${{ auto: 'automático (según tu teléfono)', claro: 'claro', oscuro: 'oscuro' }[modo()]}</p>${ab('modo', '🌓 Cambiar modo claro / oscuro', {}, 'ghost')}</div>
-<div class="card"><h3>Notificaciones y app</h3><p class="muted">Estado de notificaciones: ${nsup ? Notification.permission === 'granted' ? 'activadas' : Notification.permission === 'denied' ? 'bloqueadas en el navegador' : 'desactivadas' : 'no compatibles con este navegador'}</p><div class="row">${nsup && Notification.permission !== 'granted' ? ab('activarNotif', '🔔 Activar notificaciones') : ''}${nsup && Notification.permission === 'granted' ? ab('probarNotif', 'Enviar notificación de prueba', {}, 'ghost') : ''}${deferredInstall ? ab('instalar', '⬇ Instalar app') : '<span class="muted">Para instalar la app usa el menú del navegador (“Instalar” o “Agregar a pantalla de inicio”).</span>'}</div></div>`;
+<div class="card"><h3>Notificaciones y app</h3><p class="muted">Estado de notificaciones: ${nsup ? Notification.permission === 'granted' ? 'activadas' : Notification.permission === 'denied' ? 'bloqueadas en el navegador' : 'desactivadas' : 'no compatibles con este navegador'}</p><div class="row">${nsup && Notification.permission !== 'granted' ? ab('activarNotif', '🔔 Activar notificaciones') : ''}${nsup && Notification.permission === 'granted' ? ab('probarNotif', 'Enviar notificación de prueba', {}, 'ghost') : ''}${isStandalone() ? '<span class="muted">✅ Ya usas la app instalada.</span>' : deferredInstall ? ab('instalar', '⬇ Instalar app') : ab('instalarAyuda', '📲 Cómo instalar en mi ' + (isIOS ? 'iPhone' : 'teléfono'), {}, 'ghost')}</div></div>`;
+}
+function formCierre() {
+  if (me().role !== 'admin') return;
+  const gs = DB.grados;
+  const destinos = g => [...gs.filter(x => x.id !== g.id).map(x => ({ v: x.id, l: 'Pasan a ' + x.nombre })), { v: '__quedan', l: 'Se quedan en este grado' }, { v: '__egresan', l: 'Egresan (se desactivan sus cuentas)' }];
+  const values = { archivos: true, contenido: false, promover: true };
+  gs.forEach((g, i) => { values['g_' + g.id] = gs[i + 1] ? gs[i + 1].id : '__egresan'; });
+  openForm({
+    title: 'Cierre de año escolar',
+    intro: 'Elige qué hacer. Los usuarios y sus cuentas NO se borran. Se guarda una copia de seguridad antes de empezar.',
+    submit: 'Ejecutar cierre',
+    values,
+    fields: [
+      { k: 'archivos', label: 'Borrar TODOS los archivos subidos (entregas, módulos, documentos de exámenes, imágenes de anuncios y mensajes)', type: 'check' },
+      { k: 'contenido', label: 'Vaciar también el contenido del año: tareas, entregas, exámenes, asistencia, anuncios, mensajes y notificaciones', type: 'check' },
+      { k: 'promover', label: 'Pasar a los alumnos al siguiente grado (elige el destino de cada grado)', type: 'check' },
+      ...gs.map(g => ({ k: 'g_' + g.id, label: `Alumnos de ${g.nombre}`, type: 'select', options: () => destinos(g) })),
+      { k: 'confirma', label: 'Para confirmar escribe BORRAR', req: 1 }
+    ],
+    onSave: async d => {
+      if (d.confirma.trim().toUpperCase() !== 'BORRAR') throw new Error('Escribe BORRAR para confirmar.');
+      if (!d.archivos && !d.contenido && !d.promover) throw new Error('Elige al menos una opción.');
+      const promover = {}; if (d.promover) gs.forEach(g => { promover[g.id] = d['g_' + g.id] || '__quedan'; });
+      await flush();
+      toast('Ejecutando cierre de año…');
+      const r = await api('/api/new-year', { json: { archivos: !!d.archivos, contenido: !!d.contenido, promover } });
+      setTimeout(async () => { await pull(); render(); toast(`Listo: ${r.alumnos} alumnos movidos, ${r.egresados} egresados${d.archivos ? ', archivos borrados' : ''}.`); }, 500);
+    }
+  });
 }
 const V = { examenes: vExamenes, examen: vExamen, examen_edit: vExamenEdit, examen_res: vExamenRes, inicio: vInicio, usuarios: vUsuarios, grados: vGrados, grado: vGrado, cursos: vCursos, curso: vCurso, tareas: vTareas, tarea: vTarea, calificar: vCalificar, notas: vNotas, horario: vHorario, asistencia: vAsistencia, hijos: vHijos, anuncios: vAnuncios, buzon: vBuzon, solvencia: vSolvencia, reportes: vReportes, personalizar: vPersonalizar, permisos: vPermisos, ajustes: vAjustes };
 
@@ -1243,7 +1301,7 @@ const DEL = {
     if (t.role === 'admin' && DB.users.filter(u => u.role === 'admin').length < 2) return alert('Debe existir al menos un administrador.');
     if (!confirm(`¿Eliminar a ${nm(t)}? Se borrarán también sus entregas, asistencias y mensajes.`)) return;
     quitar(DB.entregas, e => e.alumnoId === id); quitar(DB.intentos, i => i.alumnoId === id); quitar(DB.examenes, x => x.autor === id); DB.asistencia.forEach(r => delete r.reg[id]);
-    DB.cursos.forEach(c => { if (c.maestroId === id) c.maestroId = null; }); DB.users.forEach(u => { if (u.padreId === id) u.padreId = null; });
+    DB.cursos.forEach(c => { if (c.maestroId === id) c.maestroId = null; }); DB.users.forEach(u => { if (u.padreId === id || u.padre2Id === id) unlinkTutor(u, id); });
     quitar(DB.mensajes, m => m.de === id || m.para === id); quitar(DB.notifs, n => n.uid === id); quitar(DB.anuncios, a => a.autor === id);
     quitar(DB.users, u => u.id === id); save(); render();
   },
@@ -1284,7 +1342,11 @@ const A = {
   bell: () => { S.bell = !S.bell; render(); },
   readAll: () => { misNotifs().forEach(n => n.leido = true); save(); render(); },
   notif: d => { const n = DB.notifs.find(x => x.id === d.id); if (n) { n.leido = true; save(); go(n.view && accesoVista(n.view, me()) ? n.view : 'inicio'); } },
-  instalar: async () => { if (!deferredInstall) return; deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; render(); },
+  instalar: async () => { if (!deferredInstall) return ayudaInstalar(); deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; render(); },
+  instalarAyuda: () => ayudaInstalar(),
+  espacio: async () => { const el = $('#stg'); if (el) el.textContent = 'Calculando…'; try { const r = await api('/api/storage'); if (el) el.textContent = `${r.count} archivos · ${fmtSize(r.bytes)} usados de 10 GB`; } catch (e) { toast(e.message); } },
+  cierreAnio: () => formCierre(),
+  cerrarInst: () => { try { localStorage.setItem('instOff', '1'); } catch (e) { } render(); },
   activarNotif: async () => { const r = await Notification.requestPermission(); toast(r === 'granted' ? 'Notificaciones activadas' : 'Permiso no concedido'); flushSystemNotifs(); render(); },
   probarNotif: () => showSys({ id: newId(), title: DB.config.nombre, body: 'Las notificaciones funcionan correctamente.' }),
   nuevoUsuario: () => formUsuario(null),
@@ -1293,7 +1355,7 @@ const A = {
     t.salt = newId() + newId(); t.hash = await hash(t.username, t.salt); t.mustChange = true; save(); showCreds([t]);
   },
   toggleActivo: d => { const t = U(d.id); if (!t || !canTouch(t)) return; if (t.id === me().id) return alert('No puedes desactivarte a ti mismo.'); t.activo = t.activo === false; save(); render(); },
-  toggleSolv: d => { const a = U(d.id); if (!a || !can('solvencia')) return; a.solvente = a.solvente === false; if (a.padreId) notify(a.padreId, 'Estado de solvencia', `${nm(a)}: ${a.solvente ? 'solvente' : 'insolvente'}`, 'hijos'); save(); const l = $('#slist'); if (l) l.innerHTML = solvTable(); else render(); },
+  toggleSolv: d => { const a = U(d.id); if (!a || !can('solvencia')) return; a.solvente = a.solvente === false; notifyTutores(a, 'Estado de solvencia', `${nm(a)}: ${a.solvente ? 'solvente' : 'insolvente'}`, 'hijos'); save(); const l = $('#slist'); if (l) l.innerHTML = solvTable(); else render(); },
   nuevoGrado: () => formGrado(null),
   nuevoCurso: () => formCurso(null),
   nuevoModulo: d => formModulo(d.id, null),
@@ -1311,7 +1373,7 @@ const A = {
     alumnosDeCurso(c).forEach(a => {
       const r = $(`input[name="st_${a.id}"]:checked`); if (!r) return;
       const prev = rec.reg[a.id]; rec.reg[a.id] = r.value;
-      if (r.value === 'A' && prev !== 'A' && a.padreId) notify(a.padreId, 'Inasistencia', `${nm(a)} faltó a ${c.nombre} el ${fmtDate(S.attF)}`, 'asistencia');
+      if (r.value === 'A' && prev !== 'A') notifyTutores(a, 'Inasistencia', `${nm(a)} faltó a ${c.nombre} el ${fmtDate(S.attF)}`, 'asistencia');
     });
     save(); render(); toast('Asistencia guardada');
   },
@@ -1398,7 +1460,16 @@ function vExamenes() {
 
 /* ---------- editor (maestro) ---------- */
 const newQ = (tipo = 'opcion') => ({ id: newId(), tipo, texto: '', opciones: tipo === 'opcion' ? ['', ''] : [], correcta: tipo === 'opcion' ? 0 : tipo === 'vf' ? 'v' : null, puntos: 10 });
-const exDraftNew = cursoId => ({ id: null, cursoId: cursoId || '', titulo: '', descripcion: '', abre: nowLocal(), cierra: '', minutos: 30, mostrar: true, preguntas: [newQ()] });
+const exDraftNew = cursoId => ({ id: null, cursoId: cursoId || '', titulo: '', descripcion: '', abre: nowLocal(), cierra: '', minutos: 30, mostrar: true, adjuntos: [], preguntas: [newQ()] });
+const DOC_ACCEPT = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip';
+const fitem = (f, act, extra = '') => `<div class="fitem">${fileLink(f)}<span class="fs">${fmtSize(f.size || 0)}</span>${act ? `<button type="button" class="ibtn" data-act="${act}" ${extra} title="Quitar">✕</button>` : ''}</div>`;
+async function subirDocs(files, lista, max, maxMB, done) {
+  for (const f of [...files]) {
+    if (lista.length >= max) { toast(`Máximo ${max} archivos.`); break; }
+    try { lista.push(await prepareFile(f, maxMB)); } catch (e) { toast(e.message); }
+  }
+  done();
+}
 const exLocked = d => !!d.id && DB.intentos.some(i => i.examenId === d.id);
 
 function syncEx() {
@@ -1427,6 +1498,7 @@ function vExamenEdit() {
 <div class="fld"><label>Duración (minutos)</label><input type="number" name="minutos" min="1" max="300" value="${esc(d.minutos)}" required></div>
 <div class="fld"><label>&nbsp;</label><label class="chk"><input type="checkbox" name="mostrar" ${d.mostrar ? 'checked' : ''}> Mostrar respuestas correctas al terminar</label></div>
 </div><div class="fld"><label>Instrucciones</label><textarea name="descripcion" rows="3">${esc(d.descripcion)}</textarea></div></div>
+<div class="card"><h3>📎 Documentos del examen (opcional)</h3><p class="muted">Material para tus alumnos: hojas de trabajo, imágenes, PDF… Los alumnos lo verán al comenzar el examen. Se comprimen automáticamente. Máximo 5 archivos.</p><div class="fl">${(d.adjuntos || []).map((f, i) => fitem(f, 'exDelDoc', `data-i="${i}"`)).join('')}</div>${(d.adjuntos || []).length < 5 ? `<div class="dz"><input type="file" id="exdoc" multiple accept="${DOC_ACCEPT}"></div>` : ''}</div>
 ${d.preguntas.map((q, i) => qEditor(q, i, lock)).join('')}
 ${lock ? '' : `<div class="row">${ab('exAddQ', '＋ Opción múltiple', { t: 'opcion' }, 'ghost')}${ab('exAddQ', '＋ Verdadero / Falso', { t: 'vf' }, 'ghost')}${ab('exAddQ', '＋ Respuesta abierta', { t: 'abierta' }, 'ghost')}</div>`}
 <div class="err" id="exerr"></div>
@@ -1464,7 +1536,7 @@ function exGuardar() {
   }
   const lock = exLocked(d);
   const x = d.id ? EX(d.id) : { id: newId(), autor: u.id, creado: Date.now() };
-  Object.assign(x, { cursoId: c.id, titulo: d.titulo.trim(), descripcion: d.descripcion.trim(), abre: d.abre, cierra: d.cierra, minutos: mins, mostrar: !!d.mostrar });
+  Object.assign(x, { cursoId: c.id, titulo: d.titulo.trim(), descripcion: d.descripcion.trim(), abre: d.abre, cierra: d.cierra, minutos: mins, mostrar: !!d.mostrar, adjuntos: d.adjuntos || [] });
   if (!lock) x.preguntas = d.preguntas.map(q => ({ id: q.id, tipo: q.tipo, texto: q.texto.trim(), opciones: q.tipo === 'opcion' ? q.opciones.map(o => o.trim()) : [], correcta: q.correcta, puntos: +q.puntos }));
   if (!d.id) { DB.examenes.push(x); alumnosDeCurso(c).forEach(a => notify(a.id, 'Nuevo examen: ' + x.titulo, `${c.nombre} · desde ${fmtDT(x.abre)}`, 'examenes')); }
   S.ex = null; save(); go('examenes'); toast('Examen guardado');
@@ -1480,14 +1552,14 @@ function vExamen() {
   if (it2 && it2.estado === 'en_curso') {
     const end = exDeadline(x, it2);
     return head(esc(x.titulo)) + `<div class="card timerbar"><span>⏱ Tiempo restante: <b id="timer" data-end="${end}" data-it="${it2.id}">--:--</b></span><span class="muted">Tus respuestas se guardan automáticamente</span></div>
-<form>${x.preguntas.map((q, i) => `<div class="card"><b>${i + 1}. ${esc(q.texto)}</b> <span class="muted">(${q.puntos} pts)</span><div class="opts">${q.tipo === 'abierta' ? `<textarea data-ans="${q.id}" rows="4" placeholder="Tu respuesta">${esc(it2.respuestas[q.id] || '')}</textarea>` : (q.tipo === 'vf' ? [['v', 'Verdadero'], ['f', 'Falso']] : q.opciones.map((o, j) => [String(j), o])).map(([v, l]) => `<label class="opt"><input type="radio" name="a_${q.id}" data-ans="${q.id}" value="${v}" ${String(it2.respuestas[q.id]) === v ? 'checked' : ''}> <span>${esc(l)}</span></label>`).join('')}</div></div>`).join('')}<div class="row end">${ab('exEnviar', 'Enviar examen', { id: it2.id })}</div></form>`;
+${(x.adjuntos || []).length ? `<div class="card"><h3>📎 Documentos del examen</h3><div class="fl">${x.adjuntos.map(f => fitem(f)).join('')}</div></div>` : ''}<form>${x.preguntas.map((q, i) => `<div class="card"><b>${i + 1}. ${esc(q.texto)}</b> <span class="muted">(${q.puntos} pts)</span><div class="opts">${q.tipo === 'abierta' ? `<textarea data-ans="${q.id}" rows="4" placeholder="Tu respuesta">${esc(it2.respuestas[q.id] || '')}</textarea>` : (q.tipo === 'vf' ? [['v', 'Verdadero'], ['f', 'Falso']] : q.opciones.map((o, j) => [String(j), o])).map(([v, l]) => `<label class="opt"><input type="radio" name="a_${q.id}" data-ans="${q.id}" value="${v}" ${String(it2.respuestas[q.id]) === v ? 'checked' : ''}> <span>${esc(l)}</span></label>`).join('')}</div></div>`).join('')}<div class="card"><h3>📎 Entregar documentos (opcional)</h3><p class="muted">Sube fotos o archivos de tu trabajo. Las fotos se comprimen solas. Máximo 3 archivos.</p><div class="fl">${(it2.adjuntos || []).map((f, i) => fitem(f, 'exStuDel', `data-it="${it2.id}" data-i="${i}"`)).join('')}</div>${(it2.adjuntos || []).length < 3 ? `<div class="dz"><input type="file" id="exstu" data-it="${it2.id}" multiple accept="${DOC_ACCEPT}"></div>` : ''}</div><div class="row end">${ab('exEnviar', 'Enviar examen', { id: it2.id })}</div></form>`;
   }
   if (it2) {
     const parcial = it2.estado === 'enviado';
-    return head(esc(x.titulo), back('examenes')) + `<div class="card"><h3>Resultado</h3><p style="font-size:28px;margin:6px 0"><b>${it2.nota} / ${exTotal(x)}</b></p>${parcial ? `<p class="muted">Hay preguntas abiertas pendientes de revisión: esta nota es parcial.</p>` : ''}<p class="muted">Enviado: ${fmtDT(it2.fin)}</p></div>${x.mostrar ? x.preguntas.map((q, i) => revisionQ(q, i, it2)).join('') : ''}`;
+    return head(esc(x.titulo), back('examenes')) + `<div class="card"><h3>Resultado</h3><p style="font-size:28px;margin:6px 0"><b>${it2.nota} / ${exTotal(x)}</b></p>${parcial ? `<p class="muted">Hay preguntas abiertas pendientes de revisión: esta nota es parcial.</p>` : ''}<p class="muted">Enviado: ${fmtDT(it2.fin)}</p></div>${(it2.adjuntos || []).length ? `<div class="card"><h3>📎 Documentos que entregaste</h3><div class="fl">${it2.adjuntos.map(f => fitem(f)).join('')}</div></div>` : ''}${(x.adjuntos || []).length ? `<div class="card"><h3>📎 Documentos del examen</h3><div class="fl">${x.adjuntos.map(f => fitem(f)).join('')}</div></div>` : ''}${x.mostrar ? x.preguntas.map((q, i) => revisionQ(q, i, it2)).join('') : ''}`;
   }
   const n = Date.now(), abre = new Date(x.abre).getTime(), cierra = new Date(x.cierra).getTime();
-  return head(esc(x.titulo), back('examenes')) + `<div class="card"><p class="muted">${esc(C(x.cursoId)?.nombre)}</p><p>${nl(x.descripcion) || ''}</p><p><b>${x.preguntas.length}</b> preguntas · <b>${exTotal(x)}</b> puntos · <b>${x.minutos}</b> minutos</p><p class="muted">Disponible: ${fmtDT(x.abre)} → ${fmtDT(x.cierra)}</p><p class="muted">Solo tienes un intento. Al empezar, el tiempo corre aunque cierres la página.</p>${n < abre ? chip('Aún no está disponible', 'warn') : n > cierra ? chip('El examen ya cerró', 'bad') : ab('exStart', 'Comenzar examen', { id: x.id })}</div>`;
+  return head(esc(x.titulo), back('examenes')) + `<div class="card"><p class="muted">${esc(C(x.cursoId)?.nombre)}</p><p>${nl(x.descripcion) || ''}</p><p><b>${x.preguntas.length}</b> preguntas · <b>${exTotal(x)}</b> puntos · <b>${x.minutos}</b> minutos${(x.adjuntos || []).length ? ` · 📎 ${x.adjuntos.length} documento(s) (se ven al comenzar)` : ''}</p><p class="muted">Disponible: ${fmtDT(x.abre)} → ${fmtDT(x.cierra)}</p><p class="muted">Solo tienes un intento. Al empezar, el tiempo corre aunque cierres la página.</p>${n < abre ? chip('Aún no está disponible', 'warn') : n > cierra ? chip('El examen ya cerró', 'bad') : ab('exStart', 'Comenzar examen', { id: x.id })}</div>`;
 }
 function respTxt(q, v) {
   if (v === undefined || v === '') return '<i>Sin responder</i>';
@@ -1518,7 +1590,7 @@ function formRevision(it) {
   const abiertas = x.preguntas.filter(q => q.tipo === 'abierta');
   const m = document.createElement('div');
   m.className = 'modal';
-  m.innerHTML = `<form class="mbox"><h3>${esc(nm(al))}</h3><p class="intro">${esc(x.titulo)} · nota actual ${it.nota} / ${exTotal(x)}</p>${x.preguntas.map((q, i) => revisionQ(q, i, it)).join('')}${abiertas.length ? `<h4>Calificar preguntas abiertas</h4>${abiertas.map(q => `<div class="fld"><label>${esc(q.texto.slice(0, 90))} (0 – ${q.puntos})</label><input type="number" name="p_${q.id}" min="0" max="${q.puntos}" step="0.01" value="${it.manual && it.manual[q.id] !== undefined ? it.manual[q.id] : ''}" required></div>`).join('')}` : ''}<div class="err"></div><div class="row end"><button type="button" class="btn ghost" data-close>Cerrar</button>${abiertas.length ? '<button class="btn">Guardar calificación</button>' : ''}</div></form>`;
+  m.innerHTML = `<form class="mbox"><h3>${esc(nm(al))}</h3><p class="intro">${esc(x.titulo)} · nota actual ${it.nota} / ${exTotal(x)}</p>${(it.adjuntos || []).length ? `<h4>📎 Documentos entregados por el alumno</h4><div class="fl">${it.adjuntos.map(f => fitem(f)).join('')}</div>` : ''}${x.preguntas.map((q, i) => revisionQ(q, i, it)).join('')}${abiertas.length ? `<h4>Calificar preguntas abiertas</h4>${abiertas.map(q => `<div class="fld"><label>${esc(q.texto.slice(0, 90))} (0 – ${q.puntos})</label><input type="number" name="p_${q.id}" min="0" max="${q.puntos}" step="0.01" value="${it.manual && it.manual[q.id] !== undefined ? it.manual[q.id] : ''}" required></div>`).join('')}` : ''}<div class="err"></div><div class="row end"><button type="button" class="btn ghost" data-close>Cerrar</button>${abiertas.length ? '<button class="btn">Guardar calificación</button>' : ''}</div></form>`;
   document.body.appendChild(m);
   $('[data-close]', m).onclick = () => m.remove();
   $('form', m).onsubmit = e => {
@@ -1545,6 +1617,8 @@ Object.assign(A, {
   exAddOpt: d => { syncEx(); const q = S.ex.preguntas[+d.q]; if (q.opciones.length < 6) q.opciones.push(''); render(); },
   exDelOpt: d => { syncEx(); const q = S.ex.preguntas[+d.q]; q.opciones.splice(+d.o, 1); if (q.correcta >= q.opciones.length) q.correcta = 0; render(); },
   exSave: () => exGuardar(),
+  exDelDoc: d => { syncEx(); S.ex.adjuntos.splice(+d.i, 1); render(); },
+  exStuDel: d => { const it = DB.intentos.find(i => i.id === d.it); if (!it || it.alumnoId !== me().id || it.estado !== 'en_curso') return; it.adjuntos.splice(+d.i, 1); save(true); render(); },
   exStart: d => {
     const u = me(), x = EX(d.id);
     if (!x || !exOpen(x) || intentoDe(x.id, u.id)) return toast('No puedes iniciar este examen.');
@@ -1581,6 +1655,18 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   const el = e.target;
+  if (el.id === 'exdoc' && S.ex && el.files.length) {
+    S.ex.adjuntos = S.ex.adjuntos || [];
+    syncEx(); subirDocs(el.files, S.ex.adjuntos, 5, 10, () => { syncEx(); render(); });
+    return;
+  }
+  if (el.id === 'exstu' && el.files.length) {
+    const it = DB.intentos.find(i => i.id === el.dataset.it);
+    if (!it || it.alumnoId !== me().id || it.estado !== 'en_curso') return;
+    it.adjuntos = it.adjuntos || [];
+    subirDocs(el.files, it.adjuntos, 3, 5, () => { if (it.estado === 'en_curso') { save(true); render(); } });
+    return;
+  }
   if (el.dataset && el.dataset.qf === 'tipo' && S.ex) {
     syncEx(); const q = S.ex.preguntas[+el.dataset.q]; const n = newQ(el.value);
     q.tipo = n.tipo; q.opciones = n.opciones; q.correcta = n.correcta; render();
