@@ -131,7 +131,7 @@ async function convertDataUrls(node) {
   }
   for (const k of Object.keys(node)) if (k !== 'logo') await convertDataUrls(node[k]);
 }
-async function gcFiles() {
+async function gcFiles(graceMs = 24 * 3600 * 1000) {
   try {
     if (!db || !db.users.length) return;
     const text = JSON.stringify(db);
@@ -140,11 +140,19 @@ async function gcFiles() {
     let n = 0;
     for (const f of files) {
       const id = f.key.slice(6);
-      if (!used.has(id) && Date.now() - f.lastModified > 24 * 3600 * 1000) { await store.del(f.key); n++; }
+      if (!used.has(id) && Date.now() - f.lastModified > graceMs) { await store.del(f.key); n++; }
     }
     if (n) console.log(`Limpieza: ${n} archivo(s) sin uso eliminados.`);
   } catch (e) { console.error('Limpieza de archivos falló:', e.message); }
 }
+
+/* Cierre de año: quita de la base todas las referencias a archivos (los usuarios no se tocan) */
+const isFileObj = o => o && typeof o === 'object' && typeof o.data === 'string' && o.data.startsWith('/api/file/');
+function stripFiles(node) {
+  if (Array.isArray(node)) { for (let i = node.length - 1; i >= 0; i--) { if (isFileObj(node[i])) node.splice(i, 1); else stripFiles(node[i]); } }
+  else if (node && typeof node === 'object') { for (const k of Object.keys(node)) { if (isFileObj(node[k])) delete node[k]; else stripFiles(node[k]); } }
+}
+const YEAR_CLEAR = ['modulos', 'tareas', 'entregas', 'examenes', 'intentos', 'asistencia', 'anuncios', 'mensajes', 'notifs'];
 
 /* ---------- contraseñas y sesiones ---------- */
 const pbkdf2 = (pw, salt) => new Promise((res, rej) => crypto.pbkdf2(String(pw), String(salt), 120000, 32, 'sha256', (e, k) => e ? rej(e) : res(k.toString('hex'))));
@@ -192,13 +200,13 @@ const PUBLIC_USER = u => ({ id: u.id, nombre1: u.nombre1, nombre2: u.nombre2, ap
 /* Lo que cada persona recibe: no se envían contraseñas, y alumnos/padres solo reciben sus propios datos. */
 function visibleDb(u) {
   const out = { v: db.v, config: db.config, perms: db.perms, locks: {} };
-  const kids = u.role === 'padre' ? db.users.filter(x => x.role === 'alumno' && x.padreId === u.id).map(x => x.id) : [];
+  const kids = u.role === 'padre' ? db.users.filter(x => x.role === 'alumno' && (x.padreId === u.id || x.padre2Id === u.id)).map(x => x.id) : [];
   const mine = u.role === 'alumno' ? [u.id] : kids;
   COLS.forEach(c => { out[c] = db[c]; });
   out.mensajes = db.mensajes.filter(m => m.de === u.id || m.para === u.id);
   out.notifs = db.notifs.filter(n => n.uid === u.id);
   if (['alumno', 'padre'].includes(u.role)) {
-    const fam = new Set([u.id, u.padreId, ...kids].filter(Boolean));
+    const fam = new Set([u.id, u.padreId, u.padre2Id, ...kids].filter(Boolean));
     out.users = db.users.filter(x => fam.has(x.id) || !['alumno', 'padre'].includes(x.role)).map(x => fam.has(x.id) ? stripAuth(x) : PUBLIC_USER(x));
     out.entregas = db.entregas.filter(e => mine.includes(e.alumnoId));
     out.intentos = db.intentos.filter(i => mine.includes(i.alumnoId));
@@ -478,6 +486,33 @@ async function route(req, res, url) {
         return json(res, 200, { v: db.config.appIconV });
       }
       if (m === 'DELETE') { db.config.appIconV = 0; touchDb(); return json(res, 200, { ok: true }); }
+    }
+    if (p === '/api/storage' && m === 'GET') {
+      if (u.role !== 'admin') return json(res, 403, { error: 'Solo el administrador.' });
+      const files = await store.list('files/');
+      return json(res, 200, { count: files.length, bytes: files.reduce((s, f) => s + (f.size || 0), 0) });
+    }
+    if (p === '/api/new-year' && m === 'POST') {
+      if (u.role !== 'admin') return json(res, 403, { error: 'Solo el administrador.' });
+      const b = await readJson(req);
+      if (!b.archivos && !b.contenido && !(b.promover && Object.keys(b.promover).length)) return json(res, 400, { error: 'No hay nada que hacer.' });
+      await store.put(`db/archive/antes-del-cierre-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, Buffer.from(JSON.stringify(db)), { contentType: 'application/json' });
+      const out = { alumnos: 0, egresados: 0, archivos: 0 };
+      if (b.contenido) YEAR_CLEAR.forEach(c => { db[c] = []; });
+      if (b.archivos) { COLS.filter(c => c !== 'users').forEach(c => stripFiles(db[c])); out.archivos = (await store.list('files/')).length; }
+      if (b.promover && typeof b.promover === 'object') {
+        const gids = new Set(db.grados.map(g => g.id));
+        const antes = db.users.filter(x => x.role === 'alumno').map(x => [x, x.gradoId]);
+        for (const [a, g] of antes) {
+          const t = b.promover[g];
+          if (!t || t === '__quedan') continue;
+          if (t === '__egresan') { a.activo = false; a.egresado = true; out.egresados++; }
+          else if (gids.has(t)) { a.gradoId = t; out.alumnos++; }
+        }
+      }
+      touchDb();
+      if (b.archivos) setTimeout(() => gcFiles(60000), 200);   // borra los archivos en segundo plano (deja 1 min de margen a subidas en curso)
+      return json(res, 200, out);
     }
     if (p === '/api/gc' && m === 'POST') { if (u.role !== 'admin') return json(res, 403, { error: 'Solo el administrador.' }); gcFiles(); return json(res, 200, { ok: true }); }
     return json(res, 404, { error: 'No existe' });
